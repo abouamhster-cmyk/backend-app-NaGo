@@ -18,6 +18,9 @@ import { rateLimiter } from './middlewares/rate-limiter.js';
 // Passerelle WebSockets (Tracking GPS)
 import { setupTrackerGateway } from './websocket/tracker.gateway.js';
 
+import rideRoutes from './routes/rides.routes.js';
+
+
 const app = express();
 
 // =========================================================================
@@ -37,7 +40,8 @@ app.use(rateLimiter());
 
 // Raccordement des routes
 app.use('/api/auth', authRoutes);
-
+app.use('/api/auth', authRoutes);
+app.use('/api/rides', rideRoutes); 
 // =========================================================================
 // 2. ROUTE DE HEALTH CHECK (Indispensable pour Render / AWS)
 // =========================================================================
