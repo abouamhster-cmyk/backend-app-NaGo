@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware.js';
 import { RedisService } from '../services/redis.service.js';
 import { supabaseAdmin } from '../config/database.js';
+import { sendRealtimeNotification } from '../websocket/tracker.gateway.js';
 import { AppError } from '../middlewares/error.middleware.js';
 import { z } from 'zod';
 
@@ -93,6 +94,130 @@ export const createRideRequest = async (req: AuthenticatedRequest, res: Response
       status: 'success',
       message: "Demande de course créée avec succès. En attente de propositions.",
       ride
+    });
+
+  } catch (error) {
+    next(error);
+  }
+};
+
+
+// 1. Un conducteur propose son prix pour une course
+export const submitBid = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const { ride_id, prix_propose } = req.body;
+    const prestataireId = req.user?.id;
+
+    if (!ride_id || !prix_propose || prix_propose <= 0) {
+      throw new AppError("Données de proposition invalides.", 400);
+    }
+
+    // Vérifier si la course est toujours en statut de recherche
+    const { data: ride, error: rideError } = await supabaseAdmin
+      .from('rides')
+      .select('client_id, statut')
+      .eq('id', ride_id)
+      .single();
+
+    if (rideError || !ride) throw new AppError("Course introuvable.", 404);
+    if (ride.statut !== 'recherche') throw new AppError("Cette course n'accepte plus d'offres.", 410);
+
+    // Enregistrer la proposition de prix (Bid) dans PostgreSQL
+    const { data: bid, error: bidError } = await supabaseAdmin
+      .from('ride_bids')
+      .insert({
+        ride_id,
+        prestataire_id: prestataireId,
+        prix_propose
+      })
+      .select('id, ride_id, prix_propose, prestataire_id, created_at')
+      .single();
+
+    if (bidError || !bid) {
+      throw new AppError("Vous avez déjà fait une offre sur cette course.", 409);
+    }
+
+    // Récupérer les infos simplifiées du conducteur pour les envoyer au client
+    const { data: driverInfo } = await supabaseAdmin
+      .from('profiles')
+      .select('nom, prenom, photo_url')
+      .eq('id', prestataireId)
+      .single();
+
+    // NOTIFIER LE CLIENT EN TEMPS RÉEL
+    sendRealtimeNotification(ride.client_id, 'new_bid_received', {
+      bid_id: bid.id,
+      prix_propose: bid.prix_propose,
+      driver: driverInfo
+    });
+
+    res.status(201).json({
+      status: 'success',
+      message: "Votre offre a été envoyée avec succès au client.",
+      bid
+    });
+
+  } catch (error) {
+    next(error);
+  }
+};
+
+// 2. Le client accepte l'offre d'un conducteur
+export const acceptBid = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const { bid_id } = req.body;
+    const clientId = req.user?.id;
+
+    if (!bid_id) throw new AppError("L'ID de l'offre est requis.", 400);
+
+    // 1. Récupérer l'offre d'enchère sélectionnée
+    const { data: bid, error: bidError } = await supabaseAdmin
+      .from('ride_bids')
+      .select('ride_id, prestataire_id, prix_propose')
+      .eq('id', bid_id)
+      .single();
+
+    if (bidError || !bid) throw new AppError("Offre introuvable.", 404);
+
+    // 2. Sécuriser et valider que la course appartient bien au client connecté
+    const { data: ride, error: rideError } = await supabaseAdmin
+      .from('rides')
+      .select('client_id, statut')
+      .eq('id', bid.ride_id)
+      .single();
+
+    if (rideError || !ride) throw new AppError("Course associée introuvable.", 404);
+    if (ride.client_id !== clientId) throw new AppError("Action non autorisée.", 403);
+    if (ride.statut !== 'recherche') throw new AppError("La course est déjà attribuée ou annulée.", 410);
+
+    // 3. Verrouiller la course : assigner le conducteur gagnant et le prix final convenu
+    const { data: updatedRide, error: updateError } = await supabaseAdmin
+      .from('rides')
+      .update({
+        prestataire_id: bid.prestataire_id,
+        prix_final_convenu: bid.prix_propose,
+        statut: 'accepte'
+      })
+      .eq('id', bid.ride_id)
+      .select()
+      .single();
+
+    if (updateError || !updatedRide) {
+      throw new AppError("Erreur lors de l'attribution de la course.", 500);
+    }
+
+    // 4. NOTIFIER LE CONDUCTEUR GAGNANT EN TEMPS RÉEL
+    sendRealtimeNotification(bid.prestataire_id, 'bid_accepted', {
+      ride_id: updatedRide.id,
+      prix_final: updatedRide.prix_final_convenu,
+      adresse_depart: updatedRide.adresse_depart,
+      adresse_arrivee: updatedRide.adresse_arrivee
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: "Offre acceptée. Le conducteur a été notifié.",
+      ride: updatedRide
     });
 
   } catch (error) {
