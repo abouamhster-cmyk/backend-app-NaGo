@@ -1,4 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
+import { errorHandler } from './middlewares/error.middleware.js';
+import { rateLimiter } from './middlewares/rate-limiter.js';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
