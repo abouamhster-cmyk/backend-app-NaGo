@@ -2,49 +2,50 @@ import { Server, Socket } from 'socket.io';
 import { RedisService } from '../services/redis.service.js';
 import { supabase } from '../config/database.js';
 
+let globalIo: Server; // Conserver une référence globale pour l'envoi hors passerelle
+
 export const setupTrackerGateway = (io: Server) => {
-  
-  // Middleware de sécurité pour valider le JWT Supabase avant d'accepter la connexion WebSocket
+  globalIo = io;
+
   io.use(async (socket: Socket, next) => {
     try {
       const token = socket.handshake.auth.token;
-      if (!token) {
-        return next(new Error("Authentification échouée. Token manquant."));
-      }
+      if (!token) return next(new Error("Authentification échouée. Token manquant."));
 
-      // Valider le token avec Supabase Auth
       const { data: { user }, error } = await supabase.auth.getUser(token);
-      if (error || !user) {
-        return next(new Error("Authentification échouée. Token invalide."));
-      }
+      if (error || !user) return next(new Error("Authentification échouée. Token invalide."));
 
-      // Attacher l'ID utilisateur au socket pour les événements futurs
       socket.data.userId = user.id;
       next();
     } catch (err) {
-      next(new Error("Erreur interne lors de l'authentification du socket."));
+      next(new Error("Erreur interne lors de l'authentification."));
     }
   });
 
   io.on('connection', (socket: Socket) => {
     const userId = socket.data.userId;
-    console.log(`🔌 Nouveau client WebSocket connecté : ${userId} (Socket ID: ${socket.id})`);
+    
+    // Rejoindre une chambre unique portant l'identifiant de l'utilisateur
+    // Cela nous permet d'envoyer un message à un utilisateur précis en faisant : io.to(userId).emit(...)
+    socket.join(userId);
+    console.log(`🔌 Client connecté : ${userId} et a rejoint sa room privée.`);
 
-    // 1. Réception de la position GPS en temps réel envoyée par le téléphone du prestataire
     socket.on('update_location', async (coords: { latitude: number; longitude: number }) => {
       if (!coords.latitude || !coords.longitude) return;
-
-      // Enregistrer la position dans notre cache Redis ultra-rapide
       await RedisService.updateDriverLocation(userId, coords.latitude, coords.longitude);
-      
-      console.log(`📍 GPS Mis à jour - Conducteur ${userId} : Lat ${coords.latitude}, Lng ${coords.longitude}`);
     });
 
-    // 2. Gestion de la déconnexion
     socket.on('disconnect', async () => {
-      console.log(`🔌 Client WebSocket déconnecté : ${userId}`);
-      // Retirer immédiatement le conducteur de la carte pour éviter que les clients ne le voient actif
+      console.log(`🔌 Client déconnecté : ${userId}`);
       await RedisService.removeDriverLocation(userId);
     });
   });
+};
+
+// Fonction globale hautement performante pour notifier un utilisateur précis en temps réel
+export const sendRealtimeNotification = (userId: string, event: string, data: any) => {
+  if (globalIo) {
+    globalIo.to(userId).emit(event, data);
+    console.log(`📡 Événement [${event}] envoyé en temps réel à l'utilisateur : ${userId}`);
+  }
 };
