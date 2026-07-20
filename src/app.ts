@@ -5,6 +5,7 @@ import morgan from 'morgan';
 import { env } from './config/environment.js';
 import { connectRedis, redisClient } from './config/redis.js';
 import { supabase } from './config/database.js';
+import authRoutes from './routes/auth.routes.js';
 import { errorHandler } from './middlewares/error.middleware.js';
 import { rateLimiter } from './middlewares/rate-limiter.js';
 
@@ -24,6 +25,9 @@ app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev')); // Logger H
 
 // ACTIVATION DU LIMITEUR DE SÉCURITÉ REDIS
 app.use(rateLimiter()); 
+
+app.use('/api/auth', authRoutes);
+
 
 // =========================================================================
 // 2. ROUTE DE HEALTH CHECK (Indispensable pour Render / AWS)
