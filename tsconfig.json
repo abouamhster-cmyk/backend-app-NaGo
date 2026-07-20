@@ -1,1 +1,19 @@
 
+{
+  "compilerOptions": {
+    "target": "ES2022",                          /* Version du JavaScript généré */
+    "module": "NodeNext",                        /* Gestion moderne des modules */
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "outDir": "./dist",                          /* Répertoire de compilation */
+    "rootDir": "./src",                          /* Répertoire des fichiers sources */
+    "strict": true,                              /* Active toutes les vérifications strictes */
+    "noImplicitAny": true,                       /* Interdit le type 'any' implicite */
+    "strictNullChecks": true,                    /* Gestion stricte du null et de l'undefined */
+    "esModuleInterop": true,                     /* Compatibilité avec les modules CommonJS */
+    "skipLibCheck": true,                        /* Accélère la compilation */
+    "forceConsistentCasingInFileNames": true     /* Sensibilité à la casse des fichiers */
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "**/*.spec.ts"]
+}
