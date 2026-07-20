@@ -2,12 +2,21 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
+
+// Configurations et Connecteurs
 import { env } from './config/environment.js';
 import { connectRedis, redisClient } from './config/redis.js';
 import { supabase } from './config/database.js';
+
+// Routes et Middlewares
 import authRoutes from './routes/auth.routes.js';
 import { errorHandler } from './middlewares/error.middleware.js';
 import { rateLimiter } from './middlewares/rate-limiter.js';
+
+// Passerelle WebSockets (Tracking GPS)
+import { setupTrackerGateway } from './websocket/tracker.gateway.js';
 
 const app = express();
 
@@ -26,8 +35,8 @@ app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev')); // Logger H
 // ACTIVATION DU LIMITEUR DE SÉCURITÉ REDIS
 app.use(rateLimiter()); 
 
+// Raccordement des routes
 app.use('/api/auth', authRoutes);
-
 
 // =========================================================================
 // 2. ROUTE DE HEALTH CHECK (Indispensable pour Render / AWS)
@@ -66,19 +75,33 @@ app.get('/api/health', async (req: Request, res: Response) => {
 app.use(errorHandler);
 
 // =========================================================================
-// 4. INITIALISATION DU SERVEUR ET DES CONNEXIONS
+// 4. INITIALISATION DU SERVEUR ET DES CONNEXIONS (Node.js natif + WebSockets)
 // =========================================================================
 const startServer = async () => {
   try {
-    // Connexion obligatoire à Redis
+    // 1. Connexion obligatoire au cache Redis
     await connectRedis();
 
-    // Démarrage de l'écoute sur le port configuré
-    const server = app.listen(env.PORT, () => {
+    // 2. Création du serveur HTTP natif rattaché à Express (requis pour Socket.io)
+    const httpServer = createServer(app);
+
+    // 3. Initialisation de Socket.io pour la communication bidirectionnelle en temps réel
+    const io = new Server(httpServer, {
+      cors: {
+        origin: '*', // À restreindre en production
+        methods: ['GET', 'POST']
+      }
+    });
+
+    // 4. Lancement de notre passerelle de tracking GPS temps réel
+    setupTrackerGateway(io);
+
+    // 5. Démarrage de l'écoute sur le port configuré
+    const server = httpServer.listen(env.PORT, () => {
       console.log(`🚀 Serveur de production NaGo démarré sur le port ${env.PORT} [Mode: ${env.NODE_ENV}]`);
     });
 
-    // Gestion de l'arrêt propre (Graceful Shutdown)
+    // 6. Gestion de l'arrêt propre (Graceful Shutdown)
     const shutdown = async () => {
       console.log('🔌 Arrêt du serveur en cours...');
       server.close(async () => {
