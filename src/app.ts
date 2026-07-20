@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import paymentRoutes from './routes/payments.routes.js';
 
 // Configurations et Connecteurs
 import { env } from './config/environment.js';
@@ -42,6 +43,8 @@ app.use(rateLimiter());
 app.use('/api/auth', authRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/rides', rideRoutes); 
+app.use('/api/payments', paymentRoutes); 
+
 // =========================================================================
 // 2. ROUTE DE HEALTH CHECK (Indispensable pour Render / AWS)
 // =========================================================================
