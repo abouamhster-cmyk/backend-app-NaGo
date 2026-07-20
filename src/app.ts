@@ -1,26 +1,29 @@
 import express, { Request, Response, NextFunction } from 'express';
-import { errorHandler } from './middlewares/error.middleware.js';
-import { rateLimiter } from './middlewares/rate-limiter.js';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { env } from './config/environment.js';
 import { connectRedis, redisClient } from './config/redis.js';
 import { supabase } from './config/database.js';
+import { errorHandler } from './middlewares/error.middleware.js';
+import { rateLimiter } from './middlewares/rate-limiter.js';
 
 const app = express();
 
 // =========================================================================
-// 1. MIDDLEWARES DE SÉCURITÉ ET LOGS (Niveau Production)
+// 1. MIDDLEWARES GLOBAUX (Sécurité, Logs et Limites)
 // =========================================================================
-app.use(helmet()); // Sécurise les en-têtes HTTP contre les vulnérabilités courantes
+app.use(helmet()); // Sécurise les en-têtes HTTP
 app.use(cors({
   origin: '*', // À restreindre en production avec les domaines autorisés
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-app.use(express.json()); // Permet de parser les requêtes JSON volumineuses
-app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev')); // Logs des requêtes HTTP
+app.use(express.json()); // Parse le format JSON
+app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev')); // Logger HTTP
+
+// ACTIVATION DU LIMITEUR DE SÉCURITÉ REDIS
+app.use(rateLimiter()); 
 
 // =========================================================================
 // 2. ROUTE DE HEALTH CHECK (Indispensable pour Render / AWS)
@@ -28,7 +31,7 @@ app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev')); // Logs des
 app.get('/api/health', async (req: Request, res: Response) => {
   try {
     // 1. Test de connexion Supabase
-    const { data, error } = await supabase.from('profiles').select('id').limit(1);
+    const { error } = await supabase.from('profiles').select('id').limit(1);
     const dbStatus = error ? 'DEGRADED' : 'HEALTHY';
     
     // 2. Test de connexion Redis
@@ -54,7 +57,12 @@ app.get('/api/health', async (req: Request, res: Response) => {
 });
 
 // =========================================================================
-// 3. INITIALISATION DU SERVEUR ET DES CONNEXIONS
+// 3. GESTION DES ERREURS (Doit être placé après toutes les routes)
+// =========================================================================
+app.use(errorHandler);
+
+// =========================================================================
+// 4. INITIALISATION DU SERVEUR ET DES CONNEXIONS
 // =========================================================================
 const startServer = async () => {
   try {
