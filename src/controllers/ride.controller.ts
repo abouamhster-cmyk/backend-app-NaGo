@@ -224,3 +224,80 @@ export const acceptBid = async (req: AuthenticatedRequest, res: Response, next: 
     next(error);
   }
 };
+
+
+
+// Mettre à jour l'étape de suivi de la course (Machine à états stricte)
+export const updateRideStatus = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const { ride_id, nouveau_statut } = req.body;
+    const prestataireId = req.user?.id;
+
+    if (!ride_id || !nouveau_statut) {
+      throw new AppError("L'ID de la course et le nouveau statut sont requis.", 400);
+    }
+
+    // 1. Récupérer l'état actuel de la course
+    const { data: ride, error: rideError } = await supabaseAdmin
+      .from('rides')
+      .select('*')
+      .eq('id', ride_id)
+      .single();
+
+    if (rideError || !ride) throw new AppError("Course introuvable.", 404);
+    if (ride.prestataire_id !== prestataireId) throw new AppError("Action non autorisée. Vous n'êtes pas le conducteur de cette course.", 403);
+
+    // 2. Validation stricte de la transition d'états (Machine à états)
+    let updateFields: any = { statut: nouveau_statut };
+
+    if (nouveau_statut === 'arrive_depart') {
+      if (ride.statut !== 'accepte') {
+        throw new AppError("Impossible de déclarer l'arrivée au départ. Statut actuel incohérent.", 400);
+      }
+    } 
+    else if (nouveau_statut === 'en_cours') {
+      if (ride.statut !== 'arrive_depart') {
+        throw new AppError("Impossible de démarrer la course sans être arrivé au départ.", 400);
+      }
+      updateFields.started_at = new Date().toISOString(); // Enregistre l'heure de début
+    } 
+    else if (nouveau_statut === 'termine') {
+      if (ride.statut !== 'en_cours') {
+        throw new AppError("Impossible de terminer une course qui n'a pas démarré.", 400);
+      }
+      updateFields.ended_at = new Date().toISOString(); // Enregistre l'heure de fin
+    } 
+    else {
+      throw new AppError("Statut de suivi demandé invalide.", 400);
+    }
+
+    // 3. Appliquer la mise à jour dans PostgreSQL
+    const { data: updatedRide, error: updateError } = await supabaseAdmin
+      .from('rides')
+      .update(updateFields)
+      .eq('id', ride_id)
+      .select()
+      .single();
+
+    if (updateError || !updatedRide) {
+      throw new AppError("Erreur lors de la mise à jour du statut.", 500);
+    }
+
+    // 4. NOTIFIER LE CLIENT EN TEMPS RÉEL DU CHANGEMENT D'ÉTAPE
+    sendRealtimeNotification(ride.client_id, 'ride_status_updated', {
+      ride_id: updatedRide.id,
+      statut: updatedRide.statut,
+      started_at: updatedRide.started_at,
+      ended_at: updatedRide.ended_at
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: `Statut mis à jour avec succès : ${nouveau_statut}`,
+      ride: updatedRide
+    });
+
+  } catch (error) {
+    next(error);
+  }
+};
